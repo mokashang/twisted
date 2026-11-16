@@ -1,0 +1,1 @@
+twisted.mail.imap4.wildcardToRegexp now builds a non-backtracking regular expression, so a crafted IMAP LIST/LSUB wildcard against an adversarial mailbox name no longer stalls the reactor with catastrophic backtracking.

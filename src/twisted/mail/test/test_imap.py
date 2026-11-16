@@ -14,6 +14,7 @@ import codecs
 import functools
 import locale
 import os
+import time
 import uuid
 from collections import OrderedDict
 from io import BytesIO
@@ -825,6 +826,30 @@ class IMAP4HelperTests(TestCase):
                 self.assertFalse(wildcard.match(x), x)
             for x in succeed:
                 self.assertTrue(wildcard.match(x), x)
+
+    def test_wildcardCatastrophicBacktracking(self):
+        """
+        L{imap4.wildcardToRegexp} returns a regular expression that rejects a
+        non-matching mailbox name in time linear in the name length.  A naive
+        non-greedy build (e.g. C{.*?a.*?a...b}) backtracks exponentially on a
+        crafted mailbox name with no trailing C{b}, which blocks the event
+        loop for an unbounded time (DoS via LIST/LSUB).
+        """
+        wildcard = imap4.wildcardToRegexp("*a" * 16 + "b", "/")
+        for name_length in (20, 40, 80, 160):
+            victim = "a" * name_length
+            start = time.perf_counter()
+            self.assertIsNone(wildcard.match(victim))
+            elapsed = time.perf_counter() - start
+            # 100 ms is many orders of magnitude above the linear-time cost
+            # and far below the exponential cost (seconds and up) that the
+            # old build takes at these lengths.
+            self.assertLess(
+                elapsed,
+                0.1,
+                f"wildcard match on {name_length} chars took {elapsed:.3f}s "
+                "(likely catastrophic backtracking)",
+            )
 
     def test_headerFormatter(self):
         """

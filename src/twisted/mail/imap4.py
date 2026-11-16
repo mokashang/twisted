@@ -4609,16 +4609,27 @@ def wildcardToRegexp(wildcard: str, delim: str | None = None) -> re.Pattern[str]
     @return: a L{re.Pattern} that will match IMAP mailbox names with the given
         wildcards.
     """
+    # Each wildcard atom is compiled as a tempered greedy token that stops
+    # at the next literal segment: ``(?:(?!STOP)C)*`` where C is ``.`` for
+    # ``*`` and ``[^delim]`` for ``%``.  This matches the same set of names
+    # as a plain non-greedy ``.*?``/``[^delim]*?`` followed by the literal,
+    # but it keeps the number of regex-engine steps linear in the mailbox
+    # name length.  A naive non-greedy build such as ``.*?a.*?a.*?b`` can
+    # backtrack exponentially on a crafted mailbox name with no trailing
+    # ``b``, stalling the reactor (DoS via IMAP LIST/LSUB, see GH-12934).
     parts = re.split(r"([*%])", wildcard)
     result = []
-    for p in parts:
-        if p == "*":
-            result.append("(?:.*?)")
-        elif p == "%":
-            if delim is None:
-                result.append("(?:.*?)")
+    for i, p in enumerate(parts):
+        if p == "*" or p == "%":
+            if p == "%" and delim is not None:
+                char_class = f"[^{re.escape(delim)}]"
             else:
-                result.append(f"(?:(?:[^{re.escape(delim)}])*?)")
+                char_class = "."
+            stop = parts[i + 1] if i + 1 < len(parts) else ""
+            if stop:
+                result.append(f"(?:(?!{re.escape(stop)}){char_class})*")
+            else:
+                result.append(f"{char_class}*")
         else:
             result.append(re.escape(p))
     return re.compile("".join(result), re.I)
